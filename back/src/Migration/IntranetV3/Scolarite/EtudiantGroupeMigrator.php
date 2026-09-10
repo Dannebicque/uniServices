@@ -2,9 +2,7 @@
 
 namespace App\Migration\IntranetV3\Scolarite;
 
-use App\Entity\Etudiant\EtudiantScolarite;
 use App\Entity\Etudiant\EtudiantScolariteSemestre;
-use App\Entity\Structure\StructureAnneeUniversitaire;
 use App\Entity\Structure\StructureGroupe;
 use App\Entity\Users\Etudiant;
 use App\Migration\IntranetV3\AbstractMigrator;
@@ -33,18 +31,10 @@ final class EtudiantGroupeMigrator extends AbstractMigrator
         $messages = [];
         $unresolved = [
             'etudiant' => 0,
-            'scolarite' => 0,
+            'scolariteSemestre' => 0,
             'groupe' => 0,
-            'semestre' => 0,
         ];
         $sampleCount = 0;
-
-        $activeYear = $this->entityManager->getRepository(StructureAnneeUniversitaire::class)
-            ->findOneBy(['actif' => true]);
-
-        if (null === $activeYear) {
-            return new MigrationResult(0, 0, 0, 1, ['Aucune année universitaire active trouvée dans la cible.']);
-        }
 
         $sql = <<<'SQL'
 SELECT eg.etudiant_id, eg.groupe_id
@@ -70,43 +60,35 @@ SQL;
                     continue;
                 }
 
-                $scolarite = $this->entityManager->getRepository(EtudiantScolarite::class)
-                    ->findOneBy([
-                        'etudiant' => $etudiant,
-                        'anneeUniversitaire' => $activeYear,
-                    ]);
-
-                if (null === $scolarite) {
-                    ++$skipped;
-                    ++$unresolved['scolarite'];
-                    $this->addSample($messages, $sampleCount, sprintf(
-                        'Affectation étudiant V3 #%s / groupe V3 #%s ignorée: aucune scolarité pour l\'année universitaire active.',
-                        $row['etudiant_id'],
-                        $row['groupe_id'],
-                    ));
-                    ++$processed;
-                    $this->flushBatch($context, $processed);
-                    continue;
-                }
-
-                $groupes = $this->entityManager->createQueryBuilder()
-                    ->select('g', 'sem')
-                    ->from(StructureGroupe::class, 'g')
-                    ->innerJoin('g.semestres', 'sem')
+                /*
+                 * V3 ne versionne pas etudiant_groupe par année universitaire.
+                 * On rattache donc l'affectation au semestre le plus récent dans lequel
+                 * l'étudiant possède une scolarité et où ce groupe V3 existe dans le snapshot.
+                 */
+                $scolariteSemestre = $this->entityManager->createQueryBuilder()
+                    ->select('ss')
+                    ->from(EtudiantScolariteSemestre::class, 'ss')
+                    ->innerJoin('ss.scolarite', 'sc')
+                    ->innerJoin('ss.semestre', 'sem')
                     ->innerJoin('sem.annee', 'an')
                     ->innerJoin('an.pn', 'pn')
-                    ->andWhere('g.oldId = :oldId')
-                    ->andWhere('pn.anneeUniversitaire = :anneeUniversitaire')
-                    ->setParameter('oldId', (int) $row['groupe_id'])
-                    ->setParameter('anneeUniversitaire', $activeYear)
+                    ->innerJoin('pn.anneeUniversitaire', 'au')
+                    ->innerJoin('sem.groupes', 'g')
+                    ->andWhere('sc.etudiant = :etudiant')
+                    ->andWhere('g.oldId = :groupeOldId')
+                    ->setParameter('etudiant', $etudiant)
+                    ->setParameter('groupeOldId', (int) $row['groupe_id'])
+                    ->orderBy('au.annee', 'DESC')
+                    ->addOrderBy('sem.ordreLmd', 'DESC')
+                    ->setMaxResults(1)
                     ->getQuery()
-                    ->getResult();
+                    ->getOneOrNullResult();
 
-                if ([] === $groupes) {
+                if (null === $scolariteSemestre) {
                     ++$skipped;
-                    ++$unresolved['groupe'];
+                    ++$unresolved['scolariteSemestre'];
                     $this->addSample($messages, $sampleCount, sprintf(
-                        'Affectation étudiant V3 #%s / groupe V3 #%s ignorée: groupe du snapshot actif non résolu.',
+                        'Affectation étudiant V3 #%s / groupe V3 #%s ignorée: aucune scolarité semestrielle compatible trouvée.',
                         $row['etudiant_id'],
                         $row['groupe_id'],
                     ));
@@ -115,37 +97,32 @@ SQL;
                     continue;
                 }
 
-                $matched = false;
-                foreach ($groupes as $groupe) {
-                    foreach ($groupe->getSemestres() as $semestre) {
-                        $scolariteSemestre = $this->entityManager->getRepository(EtudiantScolariteSemestre::class)
-                            ->findOneBy([
-                                'scolarite' => $scolarite,
-                                'semestre' => $semestre,
-                            ]);
-
-                        if (null === $scolariteSemestre) {
-                            continue;
-                        }
-
-                        $matched = true;
-                        if (!$scolariteSemestre->getGroupes()->contains($groupe)) {
-                            $scolariteSemestre->addGroupe($groupe);
-                            ++$created;
-                        } else {
-                            ++$updated;
-                        }
+                $groupe = null;
+                foreach ($scolariteSemestre->getSemestre()->getGroupes() as $candidate) {
+                    if ($candidate->getOldId() === (int) $row['groupe_id']) {
+                        $groupe = $candidate;
+                        break;
                     }
                 }
 
-                if (!$matched) {
+                if (!$groupe instanceof StructureGroupe) {
                     ++$skipped;
-                    ++$unresolved['semestre'];
+                    ++$unresolved['groupe'];
                     $this->addSample($messages, $sampleCount, sprintf(
-                        'Affectation étudiant V3 #%s / groupe V3 #%s ignorée: aucune scolarité semestrielle compatible dans le snapshot actif.',
+                        'Affectation étudiant V3 #%s / groupe V3 #%s ignorée: groupe du snapshot résolu introuvable.',
                         $row['etudiant_id'],
                         $row['groupe_id'],
                     ));
+                    ++$processed;
+                    $this->flushBatch($context, $processed);
+                    continue;
+                }
+
+                if (!$scolariteSemestre->getGroupes()->contains($groupe)) {
+                    $scolariteSemestre->addGroupe($groupe);
+                    ++$created;
+                } else {
+                    ++$updated;
                 }
             } catch (\Throwable $e) {
                 ++$failed;
@@ -165,11 +142,10 @@ SQL;
 
         if (array_sum($unresolved) > 0) {
             $messages[] = sprintf(
-                'Résumé des affectations non résolues: étudiants=%d, scolarités actives=%d, groupes actifs=%d, semestres compatibles=%d.',
+                'Résumé des affectations non résolues: étudiants=%d, scolarités semestrielles compatibles=%d, groupes snapshots=%d.',
                 $unresolved['etudiant'],
-                $unresolved['scolarite'],
+                $unresolved['scolariteSemestre'],
                 $unresolved['groupe'],
-                $unresolved['semestre'],
             );
         }
 
