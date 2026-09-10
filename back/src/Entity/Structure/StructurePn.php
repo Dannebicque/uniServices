@@ -8,7 +8,6 @@ use ApiPlatform\Metadata\Delete;
 use ApiPlatform\Metadata\Get;
 use ApiPlatform\Metadata\GetCollection;
 use App\Entity\Apc\ApcReferentiel;
-use App\Entity\Traits\OldIdTrait;
 use App\Filter\PnFilter;
 use App\Repository\Structure\StructurePnRepository;
 use DateTime;
@@ -18,6 +17,9 @@ use Doctrine\ORM\Mapping as ORM;
 use Symfony\Component\Serializer\Annotation\Groups;
 
 #[ORM\Entity(repositoryClass: StructurePnRepository::class)]
+#[ORM\Table(uniqueConstraints: [
+    new ORM\UniqueConstraint(name: 'UNIQ_STRUCTURE_PN_DIPLOME_ANNEE_UNIV', columns: ['diplome_id', 'annee_universitaire_id']),
+])]
 #[ApiResource(
     operations: [
         new Get(normalizationContext: ['groups' => ['pn:detail']]),
@@ -28,8 +30,6 @@ use Symfony\Component\Serializer\Annotation\Groups;
 #[ApiFilter(PnFilter::class)]
 class StructurePn
 {
-    use OldIdTrait; // à supprimer après stabilisation de la migration V3
-
     #[ORM\Id]
     #[ORM\GeneratedValue]
     #[ORM\Column]
@@ -55,14 +55,16 @@ class StructurePn
     #[ORM\ManyToOne(inversedBy: 'pn')]
     private ?ApcReferentiel $apcReferentiel = null;
 
-    /** @var Collection<int, StructureAnnee> */
+    /**
+     * @var Collection<int, StructureAnnee>
+     */
     #[ORM\OneToMany(targetEntity: StructureAnnee::class, mappedBy: 'pn', orphanRemoval: true, cascade: ['remove'])]
     #[Groups(['pn:detail', 'maquette:detail', 'diplome:detail'])]
     private Collection $annees;
 
     public function __construct(StructureDiplome $diplome)
     {
-        $this->anneePublication = (int) (new DateTime('now'))->format('Y');
+        $this->anneePublication = (int)(new DateTime('now'))->format('Y');
         $this->setDiplome($diplome);
         $this->annees = new ArrayCollection();
     }
@@ -132,7 +134,9 @@ class StructurePn
         return $this;
     }
 
-    /** @return Collection<int, StructureAnnee> */
+    /**
+     * @return Collection<int, StructureAnnee>
+     */
     public function getAnnees(): Collection
     {
         return $this->annees;
@@ -150,10 +154,14 @@ class StructurePn
 
     public function removeAnnee(StructureAnnee $annee): static
     {
-        if ($this->annees->removeElement($annee) && $annee->getPn() === $this) {
-            $annee->setPn(null);
+        if ($this->annees->removeElement($annee)) {
+            // set the owning side to null (unless already changed)
+            if ($annee->getPn() === $this) {
+                $annee->setPn(null);
+            }
         }
 
         return $this;
     }
+
 }
