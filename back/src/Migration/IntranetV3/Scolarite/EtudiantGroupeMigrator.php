@@ -14,6 +14,8 @@ use App\Migration\IntranetV3\Users\EtudiantMigrator;
 
 final class EtudiantGroupeMigrator extends AbstractMigrator
 {
+    private const MAX_DIAGNOSTIC_SAMPLES = 20;
+
     public function getName(): string
     {
         return 'etudiant-groupes';
@@ -34,11 +36,21 @@ final class EtudiantGroupeMigrator extends AbstractMigrator
             'scolariteSemestre' => 0,
             'groupe' => 0,
         ];
+        $legacyDiagnostics = [
+            'semestreCourantAbsent' => 0,
+            'scolariteCouranteAbsente' => 0,
+            'groupeIncompatibleSemestreCourant' => 0,
+            'incoherentAutre' => 0,
+        ];
         $sampleCount = 0;
 
+        $schemaManager = $this->source->createSchemaManager();
+        $hasTypeGroupeSemestre = $schemaManager->tablesExist(['type_groupe_semestre']);
+
         $sql = <<<'SQL'
-SELECT eg.etudiant_id, eg.groupe_id
+SELECT eg.etudiant_id, eg.groupe_id, e.semestre_id AS semestre_courant_id
 FROM etudiant_groupe eg
+INNER JOIN etudiant e ON e.id = eg.etudiant_id
 ORDER BY eg.etudiant_id, eg.groupe_id
 SQL;
 
@@ -87,10 +99,20 @@ SQL;
                 if (null === $scolariteSemestre) {
                     ++$skipped;
                     ++$unresolved['scolariteSemestre'];
+
+                    $reason = $this->classifyLegacyMismatch(
+                        (int) $row['etudiant_id'],
+                        (int) $row['groupe_id'],
+                        null !== $row['semestre_courant_id'] ? (int) $row['semestre_courant_id'] : null,
+                        $hasTypeGroupeSemestre,
+                        $legacyDiagnostics,
+                    );
+
                     $this->addSample($messages, $sampleCount, sprintf(
-                        'Affectation étudiant V3 #%s / groupe V3 #%s ignorée: aucune scolarité semestrielle compatible trouvée.',
+                        'Affectation étudiant V3 #%s / groupe V3 #%s ignorée: aucune scolarité semestrielle compatible trouvée (%s).',
                         $row['etudiant_id'],
                         $row['groupe_id'],
+                        $reason,
                     ));
                     ++$processed;
                     $this->flushBatch($context, $processed);
@@ -149,13 +171,82 @@ SQL;
             );
         }
 
+        if (array_sum($legacyDiagnostics) > 0) {
+            $messages[] = sprintf(
+                'Diagnostic V3 des affectations non résolues: semestre courant absent=%d, aucune scolarité sur le semestre courant=%d, groupe incompatible avec le semestre courant=%d, autres incohérences=%d.',
+                $legacyDiagnostics['semestreCourantAbsent'],
+                $legacyDiagnostics['scolariteCouranteAbsente'],
+                $legacyDiagnostics['groupeIncompatibleSemestreCourant'],
+                $legacyDiagnostics['incoherentAutre'],
+            );
+        }
+
         return new MigrationResult($created, $updated, $skipped, $failed, $messages);
+    }
+
+    /** @param array<string, int> $diagnostics */
+    private function classifyLegacyMismatch(
+        int $etudiantOldId,
+        int $groupeOldId,
+        ?int $semestreCourantOldId,
+        bool $hasTypeGroupeSemestre,
+        array &$diagnostics,
+    ): string {
+        if (null === $semestreCourantOldId) {
+            ++$diagnostics['semestreCourantAbsent'];
+
+            return 'semestre courant absent dans V3';
+        }
+
+        $hasCurrentScolarite = (bool) $this->source->fetchOne(
+            'SELECT COUNT(*) FROM scolarite WHERE etudiant_id = :etudiant AND semestre_id = :semestre AND annee_universitaire_id IS NOT NULL',
+            ['etudiant' => $etudiantOldId, 'semestre' => $semestreCourantOldId],
+        );
+
+        if (!$hasCurrentScolarite) {
+            ++$diagnostics['scolariteCouranteAbsente'];
+
+            return sprintf('aucune scolarité V3 sur le semestre courant #%d', $semestreCourantOldId);
+        }
+
+        if ($hasTypeGroupeSemestre) {
+            $groupMatchesCurrentSemester = (bool) $this->source->fetchOne(
+                <<<'SQL'
+SELECT COUNT(*)
+FROM groupe g
+INNER JOIN type_groupe tg ON tg.id = g.type_groupe_id
+INNER JOIN type_groupe_semestre tgs ON tgs.type_groupe_id = tg.id
+WHERE g.id = :groupe AND tgs.semestre_id = :semestre
+SQL,
+                ['groupe' => $groupeOldId, 'semestre' => $semestreCourantOldId],
+            );
+        } else {
+            $groupMatchesCurrentSemester = (bool) $this->source->fetchOne(
+                <<<'SQL'
+SELECT COUNT(*)
+FROM groupe g
+INNER JOIN type_groupe tg ON tg.id = g.type_groupe_id
+WHERE g.id = :groupe AND tg.semestre_id = :semestre
+SQL,
+                ['groupe' => $groupeOldId, 'semestre' => $semestreCourantOldId],
+            );
+        }
+
+        if (!$groupMatchesCurrentSemester) {
+            ++$diagnostics['groupeIncompatibleSemestreCourant'];
+
+            return sprintf('groupe incompatible avec le semestre courant V3 #%d', $semestreCourantOldId);
+        }
+
+        ++$diagnostics['incoherentAutre'];
+
+        return 'références V3 cohérentes mais aucun snapshot cible compatible';
     }
 
     /** @param list<string> $messages */
     private function addSample(array &$messages, int &$sampleCount, string $message): void
     {
-        if ($sampleCount >= 20) {
+        if ($sampleCount >= self::MAX_DIAGNOSTIC_SAMPLES) {
             return;
         }
 
