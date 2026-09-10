@@ -2,6 +2,7 @@
 
 namespace App\Migration\IntranetV3\Structure;
 
+use App\Entity\Structure\StructureAnneeUniversitaire;
 use App\Entity\Structure\StructureDiplome;
 use App\Entity\Structure\StructurePn;
 use App\Migration\IntranetV3\AbstractMigrator;
@@ -19,35 +20,59 @@ final class PnMigrator extends AbstractMigrator
     /** @return list<class-string<MigratorInterface>> */
     public function getDependencies(): array
     {
-        return [DiplomeMigrator::class];
+        return [DiplomeMigrator::class, AnneeUniversitaireMigrator::class];
     }
 
     public function migrate(MigrationContext $context): MigrationResult
     {
-        $rows = $this->source->fetchAllAssociative('SELECT id, diplome_id, libelle, annee FROM ppn ORDER BY id');
         $repository = $this->entityManager->getRepository(StructurePn::class);
         $diplomeRepository = $this->entityManager->getRepository(StructureDiplome::class);
+        $anneeUniversitaireRepository = $this->entityManager->getRepository(StructureAnneeUniversitaire::class);
         $created = $updated = $skipped = $failed = 0;
         $messages = [];
 
-        foreach ($rows as $row) {
+        // V3 ne versionnait pas réellement la structure. On reconstruit donc une
+        // racine de snapshot par couple (diplôme, année universitaire) effectivement
+        // utilisé dans les scolarités. Les descendants seront clonés depuis l'état
+        // de structure V3 connu aujourd'hui.
+        $sql = <<<'SQL'
+SELECT DISTINCT a.diplome_id, sc.annee_universitaire_id
+FROM scolarite sc
+INNER JOIN semestre s ON s.id = sc.semestre_id
+INNER JOIN annee a ON a.id = s.annee_id
+WHERE sc.annee_universitaire_id IS NOT NULL
+ORDER BY sc.annee_universitaire_id, a.diplome_id
+SQL;
+
+        foreach ($this->source->iterateAssociative($sql) as $row) {
             try {
                 $diplome = $diplomeRepository->findOneBy(['oldId' => (int) $row['diplome_id']]);
-                if (!$diplome) {
+                $anneeUniversitaire = $anneeUniversitaireRepository->findOneBy(['oldId' => (int) $row['annee_universitaire_id']]);
+
+                if (null === $diplome || null === $anneeUniversitaire) {
                     ++$skipped;
-                    $messages[] = sprintf('PN #%s skipped: diplome V3 #%s introuvable.', $row['id'], $row['diplome_id']);
+                    $messages[] = sprintf(
+                        'PN snapshot skipped: diplôme V3 #%s ou année universitaire V3 #%s introuvable.',
+                        $row['diplome_id'],
+                        $row['annee_universitaire_id'],
+                    );
                     continue;
                 }
 
-                $entity = $repository->findOneBy(['oldId' => (int) $row['id']]);
+                $entity = $repository->findOneBy([
+                    'diplome' => $diplome,
+                    'anneeUniversitaire' => $anneeUniversitaire,
+                ]);
                 $isNew = null === $entity;
                 $entity ??= new StructurePn($diplome);
 
                 $entity
-                    ->setOldId((int) $row['id'])
+                    // Aucun oldId : ce PN est une donnée reconstruite, pas la copie d'un PPN V3.
+                    ->setOldId(null)
                     ->setDiplome($diplome)
-                    ->setLibelle((string) $row['libelle'])
-                    ->setAnneePublication((int) $row['annee']);
+                    ->setAnneeUniversitaire($anneeUniversitaire)
+                    ->setAnneePublication((int) $anneeUniversitaire->getAnnee())
+                    ->setLibelle(sprintf('%s — %s', $diplome->getLibelle(), $anneeUniversitaire->getLibelle()));
 
                 if ($isNew) {
                     $this->entityManager->persist($entity);
@@ -57,7 +82,12 @@ final class PnMigrator extends AbstractMigrator
                 }
             } catch (\Throwable $e) {
                 ++$failed;
-                $messages[] = sprintf('PN #%s: %s', $row['id'], $e->getMessage());
+                $messages[] = sprintf(
+                    'PN snapshot diplôme #%s / année #%s: %s',
+                    $row['diplome_id'],
+                    $row['annee_universitaire_id'],
+                    $e->getMessage(),
+                );
             }
         }
 
