@@ -24,54 +24,60 @@ final class AnneeMigrator extends AbstractMigrator
 
     public function migrate(MigrationContext $context): MigrationResult
     {
-        $rows = $this->source->fetchAllAssociative(<<<'SQL'
-            SELECT a.id, a.diplome_id, a.libelle, a.ordre, a.libelle_long, a.actif, a.couleur,
-                   a.code_version, a.code_etape,
-                   COALESCE(
-                       (SELECT MIN(s.ppn_actif_id) FROM semestre s WHERE s.annee_id = a.id AND s.ppn_actif_id IS NOT NULL),
-                       (SELECT MAX(p.id) FROM ppn p WHERE p.diplome_id = a.diplome_id)
-                   ) AS ppn_id
-            FROM annee a
-            ORDER BY a.id
-            SQL);
         $repository = $this->entityManager->getRepository(StructureAnnee::class);
         $pnRepository = $this->entityManager->getRepository(StructurePn::class);
         $created = $updated = $skipped = $failed = 0;
         $messages = [];
 
-        foreach ($rows as $row) {
-            try {
-                $pn = null === $row['ppn_id'] ? null : $pnRepository->findOneBy(['oldId' => (int) $row['ppn_id']]);
-                if (!$pn) {
-                    ++$skipped;
-                    $messages[] = sprintf('Annee #%s skipped: aucun PN V3 exploitable pour le diplome #%s.', $row['id'], $row['diplome_id']);
-                    continue;
+        foreach ($pnRepository->findAll() as $pn) {
+            $diplomeOldId = $pn->getDiplome()?->getOldId();
+            if (null === $diplomeOldId || null === $pn->getAnneeUniversitaire()) {
+                ++$skipped;
+                continue;
+            }
+
+            $sql = <<<'SQL'
+SELECT id, diplome_id, libelle, ordre, libelle_long, actif, couleur, code_version, code_etape
+FROM annee
+WHERE diplome_id = :diplome_id
+ORDER BY ordre, id
+SQL;
+
+            foreach ($this->source->iterateAssociative($sql, ['diplome_id' => $diplomeOldId]) as $row) {
+                try {
+                    $entity = $repository->findOneBy([
+                        'oldId' => (int) $row['id'],
+                        'pn' => $pn,
+                    ]);
+                    $isNew = null === $entity;
+                    $entity ??= new StructureAnnee();
+
+                    $entity
+                        ->setOldId((int) $row['id'])
+                        ->setPn($pn)
+                        ->setLibelle((string) $row['libelle'])
+                        ->setOrdre((int) $row['ordre'])
+                        ->setLibelleLong($row['libelle_long'] ?: null)
+                        ->setActif((bool) $row['actif'])
+                        ->setCouleur($row['couleur'] ?: null)
+                        ->setApogeeCodeVersion($row['code_version'] ?: null)
+                        ->setApogeeCodeEtape($row['code_etape'] ?: null);
+
+                    if ($isNew) {
+                        $this->entityManager->persist($entity);
+                        ++$created;
+                    } else {
+                        ++$updated;
+                    }
+                } catch (\Throwable $e) {
+                    ++$failed;
+                    $messages[] = sprintf(
+                        'Annee V3 #%s / PN %s: %s',
+                        $row['id'],
+                        $pn->getId() ?? 'new',
+                        $e->getMessage(),
+                    );
                 }
-
-                $entity = $repository->findOneBy(['oldId' => (int) $row['id']]);
-                $isNew = null === $entity;
-                $entity ??= new StructureAnnee();
-
-                $entity
-                    ->setOldId((int) $row['id'])
-                    ->setPn($pn)
-                    ->setLibelle((string) $row['libelle'])
-                    ->setOrdre((int) $row['ordre'])
-                    ->setLibelleLong($row['libelle_long'] ?: null)
-                    ->setActif((bool) $row['actif'])
-                    ->setCouleur($row['couleur'] ?: null)
-                    ->setApogeeCodeVersion($row['code_version'] ?: null)
-                    ->setApogeeCodeEtape($row['code_etape'] ?: null);
-
-                if ($isNew) {
-                    $this->entityManager->persist($entity);
-                    ++$created;
-                } else {
-                    ++$updated;
-                }
-            } catch (\Throwable $e) {
-                ++$failed;
-                $messages[] = sprintf('Annee #%s: %s', $row['id'], $e->getMessage());
             }
         }
 
