@@ -23,9 +23,10 @@ abstract class AbstractMigrator implements MigratorInterface
 
     protected function flush(MigrationContext $context): void
     {
-        if (!$context->dryRun) {
-            $this->entityManager->flush();
-        }
+        // En dry-run le runner ouvre une transaction globale puis la rollback.
+        // On flush tout de même afin que les migrateurs dépendants puissent
+        // retrouver les entités créées précédemment dans la même exécution.
+        $this->entityManager->flush();
     }
 
     protected function clear(): void
