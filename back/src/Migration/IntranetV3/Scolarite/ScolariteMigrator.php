@@ -18,6 +18,8 @@ use App\Migration\IntranetV3\Users\EtudiantMigrator;
 
 final class ScolariteMigrator extends AbstractMigrator
 {
+    private const MAX_DIAGNOSTIC_SAMPLES = 20;
+
     public function getName(): string
     {
         return 'scolarites';
@@ -32,6 +34,14 @@ final class ScolariteMigrator extends AbstractMigrator
     {
         $created = $updated = $skipped = $failed = $processed = 0;
         $messages = [];
+        $diagnostics = [
+            'etudiant' => 0,
+            'anneeUniversitaire' => 0,
+            'diplome' => 0,
+            'pn' => 0,
+            'semestre' => 0,
+        ];
+        $sampleCount = 0;
 
         $sql = <<<'SQL'
 SELECT
@@ -88,12 +98,34 @@ SQL;
                         ->getOneOrNullResult();
                 }
 
-                if (null === $etudiant || null === $anneeUniversitaire || null === $diplome || null === $pn || null === $semestre) {
+                $missing = [];
+                if (null === $etudiant) {
+                    ++$diagnostics['etudiant'];
+                    $missing[] = sprintf('étudiant V3 #%s', $row['etudiant_id']);
+                }
+                if (null === $anneeUniversitaire) {
+                    ++$diagnostics['anneeUniversitaire'];
+                    $missing[] = sprintf('année universitaire V3 #%s', $row['annee_universitaire_id']);
+                }
+                if (null === $diplome) {
+                    ++$diagnostics['diplome'];
+                    $missing[] = sprintf('diplôme V3 #%s', $row['diplome_id']);
+                }
+                if (null !== $diplome && null !== $anneeUniversitaire && null === $pn) {
+                    ++$diagnostics['pn'];
+                    $missing[] = sprintf('PN snapshot diplôme #%s / année #%s', $row['diplome_id'], $row['annee_universitaire_id']);
+                }
+                if (null !== $pn && null === $semestre) {
+                    ++$diagnostics['semestre'];
+                    $missing[] = sprintf('semestre snapshot V3 #%s', $row['semestre_id']);
+                }
+
+                if ([] !== $missing) {
                     ++$skipped;
-                    $messages[] = sprintf(
-                        'Scolarite #%s ignorée: étudiant ou snapshot annuel de structure non résolu.',
-                        $row['id'],
-                    );
+                    if ($sampleCount < self::MAX_DIAGNOSTIC_SAMPLES) {
+                        $messages[] = sprintf('Scolarite #%s ignorée: %s.', $row['id'], implode(', ', $missing));
+                        ++$sampleCount;
+                    }
                     ++$processed;
                     $this->flushBatch($context, $processed);
                     continue;
@@ -146,11 +178,25 @@ SQL;
                 }
             } catch (\Throwable $e) {
                 ++$failed;
-                $messages[] = sprintf('Scolarite #%s: %s', $row['id'], $e->getMessage());
+                if ($sampleCount < self::MAX_DIAGNOSTIC_SAMPLES) {
+                    $messages[] = sprintf('Scolarite #%s: %s', $row['id'], $e->getMessage());
+                    ++$sampleCount;
+                }
             }
 
             ++$processed;
             $this->flushBatch($context, $processed);
+        }
+
+        if ($skipped > 0) {
+            $messages[] = sprintf(
+                'Résumé des références non résolues: étudiants=%d, années universitaires=%d, diplômes=%d, PN snapshots=%d, semestres snapshots=%d.',
+                $diagnostics['etudiant'],
+                $diagnostics['anneeUniversitaire'],
+                $diagnostics['diplome'],
+                $diagnostics['pn'],
+                $diagnostics['semestre'],
+            );
         }
 
         $this->flushAndClear($context);
