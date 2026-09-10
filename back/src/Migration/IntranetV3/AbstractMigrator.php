@@ -9,6 +9,8 @@ use Symfony\Component\DependencyInjection\Attribute\Autowire;
 
 abstract class AbstractMigrator implements MigratorInterface
 {
+    protected const BATCH_SIZE = 200;
+
     public function __construct(
         #[Autowire(service: 'doctrine.dbal.copy_connection')]
         protected readonly Connection $source,
@@ -27,6 +29,20 @@ abstract class AbstractMigrator implements MigratorInterface
         // On flush tout de même afin que les migrateurs dépendants puissent
         // retrouver les entités créées précédemment dans la même exécution.
         $this->entityManager->flush();
+    }
+
+    protected function flushAndClear(MigrationContext $context): void
+    {
+        $this->flush($context);
+        $this->clear();
+        gc_collect_cycles();
+    }
+
+    protected function flushBatch(MigrationContext $context, int $processed): void
+    {
+        if ($processed > 0 && 0 === $processed % self::BATCH_SIZE) {
+            $this->flushAndClear($context);
+        }
     }
 
     protected function clear(): void
