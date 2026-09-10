@@ -3,11 +3,14 @@
 namespace App\Migration\IntranetV3;
 
 use App\Migration\IntranetV3\Contract\MigratorInterface;
+use Doctrine\ORM\EntityManagerInterface;
 
 final class MigrationRunner
 {
-    public function __construct(private readonly MigrationRegistry $registry)
-    {
+    public function __construct(
+        private readonly MigrationRegistry $registry,
+        private readonly EntityManagerInterface $entityManager,
+    ) {
     }
 
     /**
@@ -15,20 +18,38 @@ final class MigrationRunner
      */
     public function run(?string $name, MigrationContext $context): array
     {
-        $results = [];
-        $executed = [];
+        $connection = $this->entityManager->getConnection();
 
-        if ($name === null) {
-            foreach (array_keys($this->registry->all()) as $migrationName) {
-                $this->runOne($migrationName, $context, $results, $executed);
+        if ($context->dryRun) {
+            $connection->beginTransaction();
+        }
+
+        try {
+            $results = [];
+            $executed = [];
+
+            if ($name === null) {
+                foreach (array_keys($this->registry->all()) as $migrationName) {
+                    $this->runOne($migrationName, $context, $results, $executed);
+                }
+            } else {
+                $this->runOne($name, $context, $results, $executed);
+            }
+
+            if ($context->dryRun && $connection->isTransactionActive()) {
+                $connection->rollBack();
+                $this->entityManager->clear();
             }
 
             return $results;
+        } catch (\Throwable $e) {
+            if ($context->dryRun && $connection->isTransactionActive()) {
+                $connection->rollBack();
+                $this->entityManager->clear();
+            }
+
+            throw $e;
         }
-
-        $this->runOne($name, $context, $results, $executed);
-
-        return $results;
     }
 
     /**
@@ -52,9 +73,7 @@ final class MigrationRunner
         $executed[$name] = true;
     }
 
-    /**
-     * @param class-string<MigratorInterface> $class
-     */
+    /** @param class-string<MigratorInterface> $class */
     private function findByClass(string $class): MigratorInterface
     {
         foreach ($this->registry->all() as $migrator) {
