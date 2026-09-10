@@ -42,7 +42,8 @@ final class ScolariteMigrator extends AbstractMigrator
         $scolariteSemestreRepository = $this->entityManager->getRepository(EtudiantScolariteSemestre::class);
 
         $sql = <<<'SQL'
-SELECT id, etudiant_id, semestre_id, annee_universitaire_id, ordre, moyenne, nb_absences, commentaire, diffuse
+SELECT id, etudiant_id, semestre_id, annee_universitaire_id, ordre, moyenne, nb_absences, commentaire, diffuse,
+       SUM(nb_absences) OVER (PARTITION BY etudiant_id, annee_universitaire_id) AS total_nb_absences
 FROM scolarite
 ORDER BY annee_universitaire_id, etudiant_id, ordre, id
 SQL;
@@ -71,21 +72,21 @@ SQL;
                         ->setEtudiant($etudiant)
                         ->setAnneeUniversitaire($anneeUniversitaire)
                         ->setDepartement($semestre->getAnnee()?->getDepartement())
-                        ->setOrdre((int) $row['ordre'])
-                        ->setNbAbsences(0)
-                        ->setPublic((bool) $row['diffuse']);
+                        ->setOrdre((int) $row['ordre']);
                     $scolarite->setActif($anneeUniversitaire->isActif() ?? false);
                     $this->entityManager->persist($scolarite);
                     ++$created;
                 } else {
-                    $scolarite->setPublic($scolarite->isPublic() || (bool) $row['diffuse']);
-                    if (null === $scolarite->getDepartement()) {
-                        $scolarite->setDepartement($semestre->getAnnee()?->getDepartement());
-                    }
                     ++$updated;
                 }
 
-                $scolarite->setNbAbsences($scolarite->getNbAbsences() + (int) $row['nb_absences']);
+                $scolarite
+                    ->setNbAbsences((int) $row['total_nb_absences'])
+                    ->setPublic($scolarite->isPublic() || (bool) $row['diffuse']);
+
+                if (null === $scolarite->getDepartement()) {
+                    $scolarite->setDepartement($semestre->getAnnee()?->getDepartement());
+                }
 
                 $scolariteSemestre = $scolariteSemestreRepository->findOneBy([
                     'scolarite' => $scolarite,
