@@ -23,33 +23,41 @@ final class ScolariteMigrator extends AbstractMigrator
 
     public function getDependencies(): array
     {
-        return [
-            EtudiantMigrator::class,
-            AnneeUniversitaireMigrator::class,
-            SemestreMigrator::class,
-        ];
+        return [EtudiantMigrator::class, AnneeUniversitaireMigrator::class, SemestreMigrator::class];
     }
 
     public function migrate(MigrationContext $context): MigrationResult
     {
-        $created = $updated = $skipped = $failed = 0;
+        $created = $updated = $skipped = $failed = $processed = 0;
         $messages = [];
 
-        $etudiantRepository = $this->entityManager->getRepository(Etudiant::class);
-        $anneeRepository = $this->entityManager->getRepository(StructureAnneeUniversitaire::class);
-        $semestreRepository = $this->entityManager->getRepository(StructureSemestre::class);
-        $scolariteRepository = $this->entityManager->getRepository(EtudiantScolarite::class);
-        $scolariteSemestreRepository = $this->entityManager->getRepository(EtudiantScolariteSemestre::class);
-
         $sql = <<<'SQL'
-SELECT id, etudiant_id, semestre_id, annee_universitaire_id, ordre, moyenne, nb_absences, commentaire, diffuse,
-       SUM(nb_absences) OVER (PARTITION BY etudiant_id, annee_universitaire_id) AS total_nb_absences
+SELECT
+    id,
+    etudiant_id,
+    semestre_id,
+    annee_universitaire_id,
+    ordre,
+    moyenne,
+    nb_absences,
+    commentaire,
+    diffuse,
+    SUM(nb_absences) OVER (PARTITION BY etudiant_id, annee_universitaire_id) AS total_nb_absences,
+    MAX(diffuse) OVER (PARTITION BY etudiant_id, annee_universitaire_id) AS public_annee
 FROM scolarite
 ORDER BY annee_universitaire_id, etudiant_id, ordre, id
 SQL;
 
-        foreach ($this->source->fetchAllAssociative($sql) as $row) {
+        $rows = $this->source->executeQuery($sql)->iterateAssociative();
+
+        foreach ($rows as $row) {
             try {
+                $etudiantRepository = $this->entityManager->getRepository(Etudiant::class);
+                $anneeRepository = $this->entityManager->getRepository(StructureAnneeUniversitaire::class);
+                $semestreRepository = $this->entityManager->getRepository(StructureSemestre::class);
+                $scolariteRepository = $this->entityManager->getRepository(EtudiantScolarite::class);
+                $scolariteSemestreRepository = $this->entityManager->getRepository(EtudiantScolariteSemestre::class);
+
                 $etudiant = $etudiantRepository->findOneBy(['oldId' => (int) $row['etudiant_id']]);
                 $anneeUniversitaire = $anneeRepository->findOneBy(['oldId' => (int) $row['annee_universitaire_id']]);
                 $semestre = $semestreRepository->findOneBy(['oldId' => (int) $row['semestre_id']]);
@@ -57,6 +65,8 @@ SQL;
                 if (null === $etudiant || null === $anneeUniversitaire || null === $semestre) {
                     ++$skipped;
                     $messages[] = sprintf('Scolarite #%s ignorée: étudiant, année universitaire ou semestre non résolu.', $row['id']);
+                    ++$processed;
+                    $this->flushBatch($context, $processed);
                     continue;
                 }
 
@@ -65,15 +75,13 @@ SQL;
                     'anneeUniversitaire' => $anneeUniversitaire,
                 ]);
 
-                $newScolarite = null === $scolarite;
-                if ($newScolarite) {
+                if (null === $scolarite) {
                     $scolarite = new EtudiantScolarite();
                     $scolarite
                         ->setEtudiant($etudiant)
                         ->setAnneeUniversitaire($anneeUniversitaire)
                         ->setDepartement($semestre->getAnnee()?->getDepartement())
                         ->setOrdre((int) $row['ordre']);
-                    $scolarite->setActif($anneeUniversitaire->isActif() ?? false);
                     $this->entityManager->persist($scolarite);
                     ++$created;
                 } else {
@@ -82,7 +90,8 @@ SQL;
 
                 $scolarite
                     ->setNbAbsences((int) $row['total_nb_absences'])
-                    ->setPublic($scolarite->isPublic() || (bool) $row['diffuse']);
+                    ->setPublic((bool) $row['public_annee']);
+                $scolarite->setActif($anneeUniversitaire->isActif() ?? false);
 
                 if (null === $scolarite->getDepartement()) {
                     $scolarite->setDepartement($semestre->getAnnee()?->getDepartement());
@@ -110,9 +119,12 @@ SQL;
                 ++$failed;
                 $messages[] = sprintf('Scolarite #%s: %s', $row['id'], $e->getMessage());
             }
+
+            ++$processed;
+            $this->flushBatch($context, $processed);
         }
 
-        $this->flush($context);
+        $this->flushAndClear($context);
 
         return new MigrationResult($created, $updated, $skipped, $failed, $messages);
     }
