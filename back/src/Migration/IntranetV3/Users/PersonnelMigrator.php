@@ -23,14 +23,17 @@ final class PersonnelMigrator extends AbstractMigrator
 
     public function migrate(MigrationContext $context): MigrationResult
     {
-        $created = $updated = $failed = 0;
+        $created = $updated = $failed = $processed = 0;
         $messages = [];
-        $repository = $this->entityManager->getRepository(Personnel::class);
-        $anneeRepository = $this->entityManager->getRepository(StructureAnneeUniversitaire::class);
 
-        $sql = 'SELECT id, username, mail_univ, mail_perso, password, prenom, nom, photo_name, annee_universitaire_id FROM personnel ORDER BY id';
-        foreach ($this->source->fetchAllAssociative($sql) as $row) {
+        $sql = 'SELECT id, username, mail_univ, mail_perso, prenom, nom, photo_name, annee_universitaire_id FROM personnel ORDER BY id';
+        $rows = $this->source->executeQuery($sql)->iterateAssociative();
+
+        foreach ($rows as $row) {
             try {
+                $repository = $this->entityManager->getRepository(Personnel::class);
+                $anneeRepository = $this->entityManager->getRepository(StructureAnneeUniversitaire::class);
+
                 $entity = $repository->findOneBy(['oldId' => (int) $row['id']]);
                 $isNew = null === $entity;
                 $entity ??= new Personnel();
@@ -39,7 +42,6 @@ final class PersonnelMigrator extends AbstractMigrator
                     ->setOldId((int) $row['id'])
                     ->setUsername((string) $row['username'])
                     ->setMailUniv((string) $row['mail_univ'])
-                    ->setPassword($row['password'])
                     ->setPrenom((string) $row['prenom'])
                     ->setNom((string) $row['nom'])
                     ->setPhotoName($row['photo_name']);
@@ -62,9 +64,12 @@ final class PersonnelMigrator extends AbstractMigrator
                 ++$failed;
                 $messages[] = sprintf('Personnel #%s: %s', $row['id'], $e->getMessage());
             }
+
+            ++$processed;
+            $this->flushBatch($context, $processed);
         }
 
-        $this->flush($context);
+        $this->flushAndClear($context);
 
         return new MigrationResult($created, $updated, 0, $failed, $messages);
     }
