@@ -5,6 +5,8 @@ namespace App\Migration\IntranetV3\Scolarite;
 use App\Entity\Etudiant\EtudiantScolarite;
 use App\Entity\Etudiant\EtudiantScolariteSemestre;
 use App\Entity\Structure\StructureAnneeUniversitaire;
+use App\Entity\Structure\StructureDiplome;
+use App\Entity\Structure\StructurePn;
 use App\Entity\Structure\StructureSemestre;
 use App\Entity\Users\Etudiant;
 use App\Migration\IntranetV3\AbstractMigrator;
@@ -33,38 +35,65 @@ final class ScolariteMigrator extends AbstractMigrator
 
         $sql = <<<'SQL'
 SELECT
-    id,
-    etudiant_id,
-    semestre_id,
-    annee_universitaire_id,
-    ordre,
-    moyenne,
-    nb_absences,
-    commentaire,
-    diffuse,
-    SUM(nb_absences) OVER (PARTITION BY etudiant_id, annee_universitaire_id) AS total_nb_absences,
-    MAX(diffuse) OVER (PARTITION BY etudiant_id, annee_universitaire_id) AS public_annee
-FROM scolarite
-ORDER BY annee_universitaire_id, etudiant_id, ordre, id
+    sc.id,
+    sc.etudiant_id,
+    sc.semestre_id,
+    sc.annee_universitaire_id,
+    a.diplome_id,
+    sc.ordre,
+    sc.moyenne,
+    sc.nb_absences,
+    sc.commentaire,
+    sc.diffuse,
+    SUM(sc.nb_absences) OVER (PARTITION BY sc.etudiant_id, sc.annee_universitaire_id) AS total_nb_absences,
+    MAX(sc.diffuse) OVER (PARTITION BY sc.etudiant_id, sc.annee_universitaire_id) AS public_annee
+FROM scolarite sc
+INNER JOIN semestre s ON s.id = sc.semestre_id
+INNER JOIN annee a ON a.id = s.annee_id
+ORDER BY sc.annee_universitaire_id, sc.etudiant_id, sc.ordre, sc.id
 SQL;
 
-        $rows = $this->source->executeQuery($sql)->iterateAssociative();
-
-        foreach ($rows as $row) {
+        foreach ($this->source->executeQuery($sql)->iterateAssociative() as $row) {
             try {
                 $etudiantRepository = $this->entityManager->getRepository(Etudiant::class);
                 $anneeRepository = $this->entityManager->getRepository(StructureAnneeUniversitaire::class);
-                $semestreRepository = $this->entityManager->getRepository(StructureSemestre::class);
+                $diplomeRepository = $this->entityManager->getRepository(StructureDiplome::class);
+                $pnRepository = $this->entityManager->getRepository(StructurePn::class);
                 $scolariteRepository = $this->entityManager->getRepository(EtudiantScolarite::class);
                 $scolariteSemestreRepository = $this->entityManager->getRepository(EtudiantScolariteSemestre::class);
 
                 $etudiant = $etudiantRepository->findOneBy(['oldId' => (int) $row['etudiant_id']]);
                 $anneeUniversitaire = $anneeRepository->findOneBy(['oldId' => (int) $row['annee_universitaire_id']]);
-                $semestre = $semestreRepository->findOneBy(['oldId' => (int) $row['semestre_id']]);
+                $diplome = $diplomeRepository->findOneBy(['oldId' => (int) $row['diplome_id']]);
+                $pn = null;
+                $semestre = null;
 
-                if (null === $etudiant || null === $anneeUniversitaire || null === $semestre) {
+                if (null !== $diplome && null !== $anneeUniversitaire) {
+                    $pn = $pnRepository->findOneBy([
+                        'diplome' => $diplome,
+                        'anneeUniversitaire' => $anneeUniversitaire,
+                    ]);
+                }
+
+                if (null !== $pn) {
+                    $semestre = $this->entityManager->createQueryBuilder()
+                        ->select('sem')
+                        ->from(StructureSemestre::class, 'sem')
+                        ->innerJoin('sem.annee', 'an')
+                        ->andWhere('sem.oldId = :oldId')
+                        ->andWhere('an.pn = :pn')
+                        ->setParameter('oldId', (int) $row['semestre_id'])
+                        ->setParameter('pn', $pn)
+                        ->getQuery()
+                        ->getOneOrNullResult();
+                }
+
+                if (null === $etudiant || null === $anneeUniversitaire || null === $diplome || null === $pn || null === $semestre) {
                     ++$skipped;
-                    $messages[] = sprintf('Scolarite #%s ignorée: étudiant, année universitaire ou semestre non résolu.', $row['id']);
+                    $messages[] = sprintf(
+                        'Scolarite #%s ignorée: étudiant ou snapshot annuel de structure non résolu.',
+                        $row['id'],
+                    );
                     ++$processed;
                     $this->flushBatch($context, $processed);
                     continue;
