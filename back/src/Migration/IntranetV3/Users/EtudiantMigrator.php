@@ -23,14 +23,17 @@ final class EtudiantMigrator extends AbstractMigrator
 
     public function migrate(MigrationContext $context): MigrationResult
     {
-        $created = $updated = $failed = 0;
+        $created = $updated = $failed = $processed = 0;
         $messages = [];
-        $repository = $this->entityManager->getRepository(Etudiant::class);
-        $bacRepository = $this->entityManager->getRepository(ScolBac::class);
 
         $sql = 'SELECT id, username, mail_univ, mail_perso, prenom, nom, photo_name, num_etudiant, num_ine, annee_bac, boursier, amenagements_particuliers, promotion, annee_sortie, bac_id FROM etudiant ORDER BY id';
-        foreach ($this->source->fetchAllAssociative($sql) as $row) {
+        $rows = $this->source->executeQuery($sql)->iterateAssociative();
+
+        foreach ($rows as $row) {
             try {
+                $repository = $this->entityManager->getRepository(Etudiant::class);
+                $bacRepository = $this->entityManager->getRepository(ScolBac::class);
+
                 $entity = $repository->findOneBy(['oldId' => (int) $row['id']]);
                 $isNew = null === $entity;
                 $entity ??= new Etudiant();
@@ -66,9 +69,12 @@ final class EtudiantMigrator extends AbstractMigrator
                 ++$failed;
                 $messages[] = sprintf('Etudiant #%s: %s', $row['id'], $e->getMessage());
             }
+
+            ++$processed;
+            $this->flushBatch($context, $processed);
         }
 
-        $this->flush($context);
+        $this->flushAndClear($context);
 
         return new MigrationResult($created, $updated, 0, $failed, $messages);
     }
