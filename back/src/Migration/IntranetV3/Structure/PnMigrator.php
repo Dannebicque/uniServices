@@ -67,8 +67,6 @@ SQL;
                 $entity ??= new StructurePn($diplome);
 
                 $entity
-                    // Aucun oldId : ce PN est une donnée reconstruite, pas la copie d'un PPN V3.
-                    ->setOldId(null)
                     ->setDiplome($diplome)
                     ->setAnneeUniversitaire($anneeUniversitaire)
                     ->setAnneePublication((int) $anneeUniversitaire->getAnnee())
