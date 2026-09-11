@@ -53,7 +53,7 @@ SELECT
     HEX(e.uuid) AS evaluation_uuid_hex
 FROM note n
 INNER JOIN evaluation e ON e.id = n.evaluation_id
-WHERE e.type_matiere = 'matiere'
+WHERE e.type_matiere IN ('matiere', 'ressource', 'sae')
 ORDER BY n.id
 SQL;
 
@@ -120,11 +120,6 @@ SQL;
                     ])
                     : null;
 
-                // La scolarité semestrielle apporte du contexte, mais elle est nullable dans
-                // EtudiantNote. Les historiques V3 contiennent de nombreuses notes dont la
-                // scolarité annuelle est fiable sans qu'une inscription au semestre exact soit
-                // encore reconstructible. On conserve donc la note au niveau annuel plutôt que
-                // de perdre une donnée d'évaluation valide.
                 if (null === $scolariteSemestre) {
                     ++$partial['scolariteSemestre'];
                 }
