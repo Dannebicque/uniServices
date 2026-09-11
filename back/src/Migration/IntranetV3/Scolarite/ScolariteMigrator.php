@@ -171,7 +171,9 @@ SQL;
                     $this->entityManager->persist($scolariteSemestre);
                 }
 
-                $scolariteSemestre->setMoyenne(null !== $row['moyenne'] ? (float) $row['moyenne'] : null);
+                $scolariteSemestre
+                    ->setMoyenne(null !== $row['moyenne'] ? (float) $row['moyenne'] : null)
+                    ->setNbAbsences((int) ($row['nb_absences'] ?? 0));
 
                 if (!empty($row['commentaire']) && empty($scolarite->getCommentaire())) {
                     $scolarite->setCommentaire((string) $row['commentaire']);
