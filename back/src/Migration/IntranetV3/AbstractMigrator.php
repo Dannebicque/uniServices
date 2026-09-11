@@ -40,6 +40,10 @@ abstract class AbstractMigrator implements MigratorInterface
 
     protected function flushBatch(MigrationContext $context, int $processed): void
     {
+        if (1 === $processed) {
+            $context->startProgress('Lignes', 0);
+        }
+
         $context->advanceProgress();
 
         if ($processed > 0 && 0 === $processed % self::BATCH_SIZE) {
