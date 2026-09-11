@@ -480,17 +480,21 @@ class Personnel implements UserInterface, PasswordAuthenticatedUserInterface
         return $this;
     }
 
-    public function setAdressePersonnelle(Adresse $adresse): void
+    public function setAdressePersonnelle(Adresse|array|null $adresse): static
     {
-        $this->adressePersonnelle = $adresse->toArray();
+        if ($adresse instanceof Adresse) {
+            $this->adressePersonnelle = $adresse->toArray();
+        } elseif (is_array($adresse)) {
+            $this->adressePersonnelle = Adresse::fromArray($adresse)?->toArray();
+        } else {
+            $this->adressePersonnelle = null;
+        }
+
+        return $this;
     }
 
     public function getAdressePersonnelle(): ?Adresse
     {
-        if ($this->adressePersonnelle === null) {
-            return null;
-        }
-
         return Adresse::fromArray($this->adressePersonnelle);
     }
 
