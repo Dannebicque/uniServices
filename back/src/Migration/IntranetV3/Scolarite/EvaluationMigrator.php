@@ -8,7 +8,10 @@ use App\Entity\Structure\StructureAnneeUniversitaire;
 use App\Entity\Structure\StructureSemestre;
 use App\Entity\Users\Personnel;
 use App\Enum\EtatEvaluationEnum;
+use App\Enum\TypeEnseignementEnum;
 use App\Migration\IntranetV3\AbstractMigrator;
+use App\Migration\IntranetV3\Apc\ApcRessourceMigrator;
+use App\Migration\IntranetV3\Apc\ApcSaeMigrator;
 use App\Migration\IntranetV3\Contract\MigratorInterface;
 use App\Migration\IntranetV3\Maquette\MatiereMigrator;
 use App\Migration\IntranetV3\MigrationContext;
@@ -29,7 +32,13 @@ final class EvaluationMigrator extends AbstractMigrator
     /** @return list<class-string<MigratorInterface>> */
     public function getDependencies(): array
     {
-        return [MatiereMigrator::class, AnneeUniversitaireMigrator::class, PersonnelMigrator::class];
+        return [
+            MatiereMigrator::class,
+            ApcRessourceMigrator::class,
+            ApcSaeMigrator::class,
+            AnneeUniversitaireMigrator::class,
+            PersonnelMigrator::class,
+        ];
     }
 
     public function migrate(MigrationContext $context): MigrationResult
@@ -68,7 +77,8 @@ SQL;
 
         foreach ($this->source->executeQuery($sql)->iterateAssociative() as $row) {
             try {
-                if ('matiere' !== $row['type_matiere']) {
+                $enseignementType = $this->mapEnseignementType((string) $row['type_matiere']);
+                if (null === $enseignementType) {
                     ++$skipped;
                     ++$diagnostics['typeMatiere'];
                     ++$processed;
@@ -110,13 +120,14 @@ SQL;
                     continue;
                 }
 
-                $enseignement = $this->findSnapshotEnseignement((int) $row['id_matiere'], $semestre);
+                $enseignement = $this->findSnapshotEnseignement((int) $row['id_matiere'], $semestre, $enseignementType);
                 if (null === $enseignement) {
                     ++$skipped;
                     ++$diagnostics['enseignement'];
                     $this->addSample($messages, $sampleCount, sprintf(
-                        'Evaluation V3 #%s ignorée: matière V3 #%s non résolue dans le semestre snapshot.',
+                        'Evaluation V3 #%s ignorée: enseignement %s V3 #%s non résolu dans le semestre snapshot.',
                         $row['id'],
+                        $row['type_matiere'],
                         $row['id_matiere'],
                     ));
                     ++$processed;
@@ -171,12 +182,11 @@ SQL;
 
         $this->flushAndClear($context);
 
-        // Seconde passe: reconstruction des évaluations parent/enfant via UUID V3.
         $parentSql = <<<'SQL'
 SELECT HEX(e.uuid) AS uuid_hex, HEX(parent.uuid) AS parent_uuid_hex
 FROM evaluation e
 INNER JOIN evaluation parent ON parent.id = e.parent_id
-WHERE e.type_matiere = 'matiere'
+WHERE e.type_matiere IN ('matiere', 'ressource', 'sae')
 SQL;
 
         foreach ($this->source->executeQuery($parentSql)->iterateAssociative() as $row) {
@@ -198,7 +208,7 @@ SQL;
 
         if (array_sum($diagnostics) > 0) {
             $messages[] = sprintf(
-                'Résumé évaluations non migrées: autres types de matière=%d, années universitaires=%d, semestres=%d, enseignements=%d.',
+                'Résumé évaluations non migrées: types non supportés=%d, années universitaires=%d, semestres=%d, enseignements=%d.',
                 $diagnostics['typeMatiere'],
                 $diagnostics['anneeUniversitaire'],
                 $diagnostics['semestre'],
@@ -225,20 +235,35 @@ SQL;
             ->getOneOrNullResult();
     }
 
-    private function findSnapshotEnseignement(int $oldId, StructureSemestre $semestre): ?ScolEnseignement
-    {
+    private function findSnapshotEnseignement(
+        int $oldId,
+        StructureSemestre $semestre,
+        TypeEnseignementEnum $type,
+    ): ?ScolEnseignement {
         return $this->entityManager->createQueryBuilder()
             ->select('ens')
             ->from(ScolEnseignement::class, 'ens')
             ->innerJoin('ens.enseignementUes', 'ensUe')
             ->innerJoin('ensUe.ue', 'ue')
             ->andWhere('ens.oldId = :oldId')
+            ->andWhere('ens.type = :type')
             ->andWhere('ue.semestre = :semestre')
             ->setParameter('oldId', $oldId)
+            ->setParameter('type', $type)
             ->setParameter('semestre', $semestre)
             ->setMaxResults(1)
             ->getQuery()
             ->getOneOrNullResult();
+    }
+
+    private function mapEnseignementType(string $type): ?TypeEnseignementEnum
+    {
+        return match ($type) {
+            'matiere' => TypeEnseignementEnum::TYPE_MATIERE,
+            'ressource' => TypeEnseignementEnum::TYPE_RESSOURCE,
+            'sae' => TypeEnseignementEnum::TYPE_SAE,
+            default => null,
+        };
     }
 
     private function uuidFromHex(?string $hex): Uuid
