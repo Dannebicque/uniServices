@@ -30,22 +30,15 @@ final class ApcRelationMigrator extends AbstractMigrator
         $messages = [];
 
         $resourceSemesterTable = $this->resolveJoinTable(['apc_ressource_semestre', 'apc_ressource_semestre_semestre']);
-        $saeSemesterTable = $this->resolveJoinTable(['apc_sae_semestre', 'apc_sae_semestre_semestre']);
 
         foreach ($this->entityManager->getRepository(StructureSemestre::class)->findAll() as $semestre) {
             $semestreOldId = $semestre->getOldId();
-            if (null === $semestreOldId) {
+            if (null === $semestreOldId || null === $resourceSemesterTable) {
                 continue;
             }
 
             try {
-                if (null !== $resourceSemesterTable) {
-                    $this->linkResourceParents($semestre, $semestreOldId, $resourceSemesterTable, $updated, $skipped, $messages);
-                }
-
-                if (null !== $resourceSemesterTable && null !== $saeSemesterTable) {
-                    $this->linkSaeResources($semestre, $semestreOldId, $resourceSemesterTable, $saeSemesterTable, $updated, $skipped, $messages);
-                }
+                $this->linkResourceParents($semestre, $semestreOldId, $resourceSemesterTable, $updated, $skipped);
             } catch (\Throwable $e) {
                 ++$failed;
                 if (count($messages) < 20) {
@@ -56,19 +49,21 @@ final class ApcRelationMigrator extends AbstractMigrator
             $this->flush($context);
         }
 
+        if ($this->source->createSchemaManager()->tablesExist(['apc_sae_ressource'])) {
+            $messages[] = 'Liens SAÉ↔ressources V3 non migrés: le modèle cible ne fournit pas encore une relation adaptée (V3 potentiellement multiple, cible relation simple sans accesseur).';
+        }
+
         $this->flushAndClear($context);
 
         return new MigrationResult($created, $updated, $skipped, $failed, $messages);
     }
 
-    /** @param list<string> $messages */
     private function linkResourceParents(
         StructureSemestre $semestre,
         int $semestreOldId,
         string $resourceSemesterTable,
         int &$updated,
         int &$skipped,
-        array &$messages,
     ): void {
         $sql = sprintf(<<<'SQL'
 SELECT re.apc_ressource_parent_id AS parent_id, re.apc_ressource_enfant_id AS child_id
@@ -88,53 +83,6 @@ SQL, $resourceSemesterTable);
             }
 
             $child->setParent($parent);
-            ++$updated;
-        }
-    }
-
-    /** @param list<string> $messages */
-    private function linkSaeResources(
-        StructureSemestre $semestre,
-        int $semestreOldId,
-        string $resourceSemesterTable,
-        string $saeSemesterTable,
-        int &$updated,
-        int &$skipped,
-        array &$messages,
-    ): void {
-        $sql = sprintf(<<<'SQL'
-SELECT sr.sae_id, sr.ressource_id
-FROM apc_sae_ressource sr
-INNER JOIN %1$s ss ON ss.apc_sae_id = sr.sae_id AND ss.semestre_id = :semestre_id
-INNER JOIN %2$s rs ON rs.apc_ressource_id = sr.ressource_id AND rs.semestre_id = :semestre_id
-ORDER BY sr.id
-SQL, $saeSemesterTable, $resourceSemesterTable);
-
-        $seenResources = [];
-        foreach ($this->source->fetchAllAssociative($sql, ['semestre_id' => $semestreOldId]) as $row) {
-            $resourceOldId = (int) $row['ressource_id'];
-            if (isset($seenResources[$resourceOldId]) && $seenResources[$resourceOldId] !== (int) $row['sae_id']) {
-                ++$skipped;
-                if (count($messages) < 20) {
-                    $messages[] = sprintf(
-                        'Ressource APC V3 #%d / semestre #%d liée à plusieurs SAÉ: relation supplémentaire ignorée.',
-                        $resourceOldId,
-                        $semestreOldId,
-                    );
-                }
-                continue;
-            }
-
-            $resource = $this->findTeaching($resourceOldId, TypeEnseignementEnum::TYPE_RESSOURCE, $semestre);
-            $sae = $this->findTeaching((int) $row['sae_id'], TypeEnseignementEnum::TYPE_SAE, $semestre);
-
-            if (null === $resource || null === $sae) {
-                ++$skipped;
-                continue;
-            }
-
-            $resource->setSae($sae);
-            $seenResources[$resourceOldId] = (int) $row['sae_id'];
             ++$updated;
         }
     }
