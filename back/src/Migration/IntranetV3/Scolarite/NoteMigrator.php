@@ -36,6 +36,8 @@ final class NoteMigrator extends AbstractMigrator
             'evaluation' => 0,
             'etudiant' => 0,
             'scolarite' => 0,
+        ];
+        $partial = [
             'scolariteSemestre' => 0,
         ];
         $sampleCount = 0;
@@ -118,16 +120,13 @@ SQL;
                     ])
                     : null;
 
+                // La scolarité semestrielle apporte du contexte, mais elle est nullable dans
+                // EtudiantNote. Les historiques V3 contiennent de nombreuses notes dont la
+                // scolarité annuelle est fiable sans qu'une inscription au semestre exact soit
+                // encore reconstructible. On conserve donc la note au niveau annuel plutôt que
+                // de perdre une donnée d'évaluation valide.
                 if (null === $scolariteSemestre) {
-                    ++$skipped;
-                    ++$diagnostics['scolariteSemestre'];
-                    $this->addSample($messages, $sampleCount, sprintf(
-                        'Note V3 #%s ignorée: scolarité semestrielle non résolue.',
-                        $row['id'],
-                    ));
-                    ++$processed;
-                    $this->flushBatch($context, $processed);
-                    continue;
+                    ++$partial['scolariteSemestre'];
                 }
 
                 $note = $this->entityManager->getRepository(EtudiantNote::class)->findOneBy([
@@ -187,11 +186,17 @@ SQL;
 
         if (array_sum($diagnostics) > 0) {
             $messages[] = sprintf(
-                'Résumé notes non migrées: évaluations=%d, étudiants=%d, scolarités annuelles=%d, scolarités semestrielles=%d.',
+                'Résumé notes non migrées: évaluations=%d, étudiants=%d, scolarités annuelles=%d.',
                 $diagnostics['evaluation'],
                 $diagnostics['etudiant'],
                 $diagnostics['scolarite'],
-                $diagnostics['scolariteSemestre'],
+            );
+        }
+
+        if ($partial['scolariteSemestre'] > 0) {
+            $messages[] = sprintf(
+                'Notes migrées sans rattachement semestriel précis: %d (scolarité annuelle conservée).',
+                $partial['scolariteSemestre'],
             );
         }
 
