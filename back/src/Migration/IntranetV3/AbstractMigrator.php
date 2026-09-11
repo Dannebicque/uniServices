@@ -40,9 +40,21 @@ abstract class AbstractMigrator implements MigratorInterface
 
     protected function flushBatch(MigrationContext $context, int $processed): void
     {
+        $context->advanceProgress();
+
         if ($processed > 0 && 0 === $processed % self::BATCH_SIZE) {
             $this->flushAndClear($context);
         }
+    }
+
+    protected function startProgress(MigrationContext $context, string $label, int $total): void
+    {
+        $context->startProgress($label, $total);
+    }
+
+    protected function finishProgress(MigrationContext $context): void
+    {
+        $context->finishProgress();
     }
 
     protected function clear(): void
