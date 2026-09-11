@@ -85,12 +85,12 @@ final class MigrateIntranetV3Command extends Command
                 }
             },
             onProgressStart: static function (string $label, int $total) use ($output, &$detail): void {
-                if ($total <= 0) {
-                    return;
-                }
-
                 $detail = new ProgressBar($output, $total);
-                $detail->setFormat('      %message% %current%/%max% [%bar%] %percent:3s%%');
+                if ($total > 0) {
+                    $detail->setFormat('      %message% %current%/%max% [%bar%] %percent:3s%%');
+                } else {
+                    $detail->setFormat('      %message% %current% lignes traitées');
+                }
                 $detail->setMessage($label);
                 $detail->start();
             },
