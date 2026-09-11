@@ -10,6 +10,7 @@ use App\Migration\IntranetV3\AbstractMigrator;
 use App\Migration\IntranetV3\Contract\MigratorInterface;
 use App\Migration\IntranetV3\MigrationContext;
 use App\Migration\IntranetV3\MigrationResult;
+use App\Migration\IntranetV3\Structure\TypeDiplomeMigrator;
 
 final class ApcDiplomeLinkMigrator extends AbstractMigrator
 {
