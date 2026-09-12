@@ -98,11 +98,11 @@ class Etudiant implements UserInterface, PasswordAuthenticatedUserInterface
 
     #[ORM\Column(type: Types::JSON, nullable: true)]
     #[Groups(['etudiant:detail', 'etudiant:write'])]
-    private ?array $adresseEtudiante = null;
+    private ?array $adresseEtudiante = null; //faire un valueobject ?
 
     #[ORM\Column(type: Types::JSON, nullable: true)]
     #[Groups(['etudiant:detail', 'etudiant:write'])]
-    private ?array $adresseParentale = null;
+    private ?array $adresseParentale = null; //faire un valueobject ?
 
     #[ORM\Column(length: 255, nullable: true)]
     #[Groups(['etudiant:detail', 'etudiant:write'])]
@@ -337,50 +337,40 @@ class Etudiant implements UserInterface, PasswordAuthenticatedUserInterface
         return $this;
     }
 
-    public function setAdresseEtudiante(Adresse $adresse): void
+    public function setAdresseEtudiante(Adresse|array|null $adresse): static
     {
-        $this->adresseEtudiante = $adresse->toArray();
+        if ($adresse instanceof Adresse) {
+            $this->adresseEtudiante = $adresse->toArray();
+        } elseif (is_array($adresse)) {
+            $this->adresseEtudiante = Adresse::fromArray($adresse)?->toArray();
+        } else {
+            $this->adresseEtudiante = null;
+        }
+
+        return $this;
     }
 
     public function getAdresseEtudiante(): ?Adresse
     {
-        if ($this->adresseEtudiante === null) {
-            return null;
-        }
-
-        $data = [
-            'adresse' => $this->adresseEtudiante['adresse'],
-            'complement1' => $this->adresseEtudiante['complement1'],
-            'complement2' => $this->adresseEtudiante['complement2'],
-            'ville' => $this->adresseEtudiante['ville'],
-            'codePostal' => $this->adresseEtudiante['codePostal'],
-            'pays' => $this->adresseEtudiante['pays'],
-        ];
-
-        return Adresse::fromArray($data);
+        return Adresse::fromArray($this->adresseEtudiante);
     }
 
-    public function setAdresseParentale(Adresse $adresse): void
+    public function setAdresseParentale(Adresse|array|null $adresse): static
     {
-        $this->adresseParentale= $adresse->toArray();
+        if ($adresse instanceof Adresse) {
+            $this->adresseParentale = $adresse->toArray();
+        } elseif (is_array($adresse)) {
+            $this->adresseParentale = Adresse::fromArray($adresse)?->toArray();
+        } else {
+            $this->adresseParentale = null;
+        }
+
+        return $this;
     }
 
     public function getAdresseParentale(): ?Adresse
     {
-        if ($this->adresseParentale === null) {
-            return null;
-        }
-
-        $data = [
-            'adresse' => $this->adresseParentale['adresse'],
-            'complement1' => $this->adresseParentale['complement1'],
-            'complement2' => $this->adresseParentale['complement2'],
-            'ville' => $this->adresseParentale['ville'],
-            'codePostal' => $this->adresseParentale['codePostal'],
-            'pays' => $this->adresseParentale['pays'],
-        ];
-
-        return Adresse::fromArray($data);
+        return Adresse::fromArray($this->adresseParentale);
     }
 
     public function getApplications(): ?array

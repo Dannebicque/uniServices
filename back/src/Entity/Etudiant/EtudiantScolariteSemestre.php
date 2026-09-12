@@ -90,6 +90,10 @@ class EtudiantScolariteSemestre
     #[Groups(['scolarite-semestre:detail'])]
     private ?bool $decision = null;
 
+    #[ORM\Column(options: ['default' => 0])]
+    #[Groups(['scolarite-semestre:detail', 'scolarite-semestre:absence'])]
+    private int $nbAbsences = 0;
+
     #[ORM\ManyToOne(inversedBy: 'scolariteSemestre')]
     #[ORM\JoinColumn(nullable: true, onDelete: 'SET NULL')]
     #[Groups(['scolarite-semestre:detail', 'etudiant:read'])]
@@ -119,9 +123,6 @@ class EtudiantScolariteSemestre
         return $this;
     }
 
-    /**
-     * @return Collection<int, \IntranetBundle\Entity\Etudiant\EtudiantAbsence>
-     */
     public function getAbsence(): Collection
     {
         return $this->absence;
@@ -140,7 +141,6 @@ class EtudiantScolariteSemestre
     public function removeAbsence(\IntranetBundle\Entity\Etudiant\EtudiantAbsence $absence): static
     {
         if ($this->absence->removeElement($absence)) {
-            // set the owning side to null (unless already changed)
             if ($absence->getScolariteSemestre() === $this) {
                 $absence->setScolariteSemestre(null);
             }
@@ -149,9 +149,6 @@ class EtudiantScolariteSemestre
         return $this;
     }
 
-    /**
-     * @return Collection<int, EtudiantNote>
-     */
     public function getNote(): Collection
     {
         return $this->note;
@@ -170,7 +167,6 @@ class EtudiantScolariteSemestre
     public function removeNote(EtudiantNote $note): static
     {
         if ($this->note->removeElement($note)) {
-            // set the owning side to null (unless already changed)
             if ($note->getScolariteSemestre() === $this) {
                 $note->setScolariteSemestre(null);
             }
@@ -191,9 +187,6 @@ class EtudiantScolariteSemestre
         return $this;
     }
 
-    /**
-     * @return Collection<int, StructureGroupe>
-     */
     public function getGroupes(): Collection
     {
         return $this->groupes;
@@ -253,6 +246,18 @@ class EtudiantScolariteSemestre
     public function setDecision(?bool $decision): void
     {
         $this->decision = $decision;
+    }
+
+    public function getNbAbsences(): int
+    {
+        return $this->nbAbsences;
+    }
+
+    public function setNbAbsences(int $nbAbsences): static
+    {
+        $this->nbAbsences = $nbAbsences;
+
+        return $this;
     }
 
     public function getProposition(): ?StructureSemestre
