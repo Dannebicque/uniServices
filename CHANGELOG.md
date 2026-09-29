@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.1.10](https://github.com/IUTTroyes/uniServices/compare/v0.1.9...v0.1.10) (2026-09-22)
+
+
+### Features
+
+* add Cahier de texte view and routing, update ScolariteView for student data retrieval ([#242](https://github.com/IUTTroyes/uniServices/issues/242)) ([30c0ac4](https://github.com/IUTTroyes/uniServices/commit/30c0ac4adc57e73e6d2273758503ec029fa3ae94))
+* mise à jour du script de suppression d'un bundle ([a7d990e](https://github.com/IUTTroyes/uniServices/commit/a7d990e7dc5f197c92981eda762364c68e217eb4))
+
+
+### Bug Fixes
+
+* transformation des moyennesUe et moyennesMatieres en Entités liées à EtudiantScolariteSemestre ([226757c](https://github.com/IUTTroyes/uniServices/commit/226757c5f356fed72dc32dd20a1a7f1af9c4d8b7))
+
+## [0.1.9](https://github.com/IUTTroyes/uniServices/compare/v0.1.8...v0.1.9) (2026-09-21)
+
+
+### Features
+
+* add Cahier de texte view and routing, update ScolariteView for student data retrieval ([#241](https://github.com/IUTTroyes/uniServices/issues/241)) ([0b2968a](https://github.com/IUTTroyes/uniServices/commit/0b2968a24805e77b73e26bf88e1ebdb0bd3682f4))
+* **Scolarité:** ajout de la gestion des départements pour les étudiants et intégration de la vue Scolarité ([#235](https://github.com/IUTTroyes/uniServices/issues/235)) ([52127d8](https://github.com/IUTTroyes/uniServices/commit/52127d86b16c4c14313ef0bf9cd93a59dd2cfd56))
+
 ## [0.1.8](https://github.com/IUTTroyes/uniServices/compare/v0.1.7...v0.1.8) (2026-09-15)
 
 
