@@ -66,6 +66,33 @@ function extractUsedDevPorts(array $scripts): array
     return array_values(array_unique($usedPorts));
 }
 
+function escapeSqlLiteral(string $value): string
+{
+    return str_replace("'", "''", $value);
+}
+
+function cleanupPackagesReferences(string $projectRoot, array $packageNames): void
+{
+    if (!is_dir($projectRoot . '/back')) {
+        return;
+    }
+
+    $cleanedNames = array_values(array_unique(array_filter(array_map(static fn ($name) => trim((string) $name), $packageNames))));
+    if ($cleanedNames === []) {
+        return;
+    }
+
+    foreach ($cleanedNames as $packageName) {
+        $escapedName = escapeSqlLiteral($packageName);
+
+        $removeFromEtudiantScolarite = "UPDATE etudiant_scolarite SET packages = COALESCE((SELECT jsonb_agg(value) FROM jsonb_array_elements_text(packages::jsonb) AS value WHERE value <> '{$escapedName}'), '[]'::jsonb)::json WHERE packages::jsonb ? '{$escapedName}'";
+        runCommand('bin/console doctrine:query:sql ' . escapeshellarg($removeFromEtudiantScolarite), $projectRoot . '/back');
+
+        $removeFromStructureDepartementPersonnel = "UPDATE structure_departement_personnel SET packages = COALESCE((SELECT jsonb_agg(value) FROM jsonb_array_elements_text(packages::jsonb) AS value WHERE value <> '{$escapedName}'), '[]'::jsonb)::json WHERE packages::jsonb ? '{$escapedName}'";
+        runCommand('bin/console doctrine:query:sql ' . escapeshellarg($removeFromStructureDepartementPersonnel), $projectRoot . '/back');
+    }
+}
+
 if ($argc < 2) {
     echo "Usage: php scripts/remove-bundle.php <bundle-name>\n";
     echo "Example: php scripts/remove-bundle.php sample-bundle\n";
@@ -85,9 +112,12 @@ if (!str_ends_with($bundlePascal, 'Bundle')) {
     $bundlePascal .= 'Bundle';
 }
 $bundleShortName = preg_replace('/-bundle$/', '', $bundleKebab);
+$bundleBasePascal = preg_replace('/Bundle$/', '', $bundlePascal);
 
 $projectRoot = dirname(__DIR__);
 $bundlesConfigPath = $projectRoot . '/back/config/bundles.php';
+$doctrineConfigPath = $projectRoot . '/back/config/packages/doctrine.yaml';
+$frontBundlesRegistryPath = $projectRoot . '/packages/shell/assets/bundles-registry.js';
 $rootPackagePath = $projectRoot . '/package.json';
 $rootComposerPath = $projectRoot . '/composer.json';
 $backComposerPath = $projectRoot . '/back/composer.json';
@@ -112,6 +142,8 @@ if (is_file($metaPath)) {
         $publicAssetsPath = $projectRoot . '/back/public/' . $bundleShortName;
     }
 }
+
+$packagesNamesToCleanup = [$bundleShortName, $bundleKebab, $bundlePascal, $bundleBasePascal, lcfirst($bundleBasePascal)];
 
 // 1. Remove directory
 if (is_dir($bundlePath)) {
@@ -186,6 +218,10 @@ if (file_exists($rootComposerPath)) {
             unset($rootComposer['replace']["iuttroyes/$bundleKebab"]);
             $changed = true;
         }
+        if (isset($rootComposer['autoload-dev']['psr-4']["$bundlePascal\\Tests\\"])) {
+            unset($rootComposer['autoload-dev']['psr-4']["$bundlePascal\\Tests\\"]);
+            $changed = true;
+        }
 
         if ($changed) {
             file_put_contents($rootComposerPath, json_encode($rootComposer, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
@@ -215,6 +251,40 @@ if (file_exists($bundlesConfigPath)) {
     }
 }
 
+// 5b. Update Doctrine mappings to avoid references to disabled/removed bundles
+if (file_exists($doctrineConfigPath)) {
+    $doctrineConfigRaw = file_get_contents($doctrineConfigPath);
+    $mappingPattern = '/^\s{20}' . preg_quote($bundlePascal, '/') . ':\R(?:^\s{24}[^\r\n]*\R)*/m';
+    if (preg_match($mappingPattern, $doctrineConfigRaw)) {
+        $doctrineConfigRaw = preg_replace($mappingPattern, '', $doctrineConfigRaw);
+        file_put_contents($doctrineConfigPath, $doctrineConfigRaw);
+        echo "Updated back/config/packages/doctrine.yaml\n";
+    }
+}
+
+// 5c. Update front bundles registry (shell/widgets)
+if (file_exists($frontBundlesRegistryPath)) {
+    $frontRegistryRaw = file_get_contents($frontBundlesRegistryPath);
+    $changed = false;
+
+    $importPattern = '/^\s*import\s+' . preg_quote($bundleShortName, '/') . '\s+from\s+["\'][^"\']*["\'];\s*\R?/m';
+    if (preg_match($importPattern, $frontRegistryRaw)) {
+        $frontRegistryRaw = preg_replace($importPattern, '', $frontRegistryRaw);
+        $changed = true;
+    }
+
+    $bundleEntryPattern = '/^\s*' . preg_quote($bundleShortName, '/') . '\s*,?\s*\R?/m';
+    if (preg_match($bundleEntryPattern, $frontRegistryRaw)) {
+        $frontRegistryRaw = preg_replace($bundleEntryPattern, '', $frontRegistryRaw);
+        $changed = true;
+    }
+
+    if ($changed) {
+        file_put_contents($frontBundlesRegistryPath, $frontRegistryRaw);
+        echo "Updated packages/shell/assets/bundles-registry.js\n";
+    }
+}
+
 // 6. Regenerate tools registry from all bundle.meta.json (local + external)
 regenerate_tools_registry($projectRoot);
 
@@ -222,7 +292,13 @@ echo "- Updating PHP autoloading...\n";
 runCommand('composer dump-autoload', $projectRoot);
 if (is_dir($projectRoot . '/back')) {
     runCommand('composer dump-autoload', $projectRoot . '/back');
-    runCommand('bin/console cache:clear', $projectRoot . '/back');
+    echo "- Cleaning packages references in DB...\n";
+    cleanupPackagesReferences($projectRoot, $packagesNamesToCleanup);
+    $backCachePath = $projectRoot . '/back/var/cache';
+    removeDirectoryRecursive($backCachePath . '/dev');
+    removeDirectoryRecursive($backCachePath . '/prod');
+    runCommand('bin/console cache:clear --env=dev --no-warmup', $projectRoot . '/back');
+    runCommand('bin/console cache:clear --env=prod --no-warmup', $projectRoot . '/back');
 }
 
 echo "- Updating Node workspaces...\n";

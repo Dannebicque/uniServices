@@ -14,7 +14,8 @@ use App\Entity\Apc\ApcReferentiel;
 use App\Entity\Personnel\PersonnelEnseignantHrs;
 use App\Entity\Structure\StructureAnneeUniversitaire;
 use App\Entity\Traits\EduSignTrait;
-use App\Entity\Traits\LifeCycleTrait;
+use App\Entity\Contracts\TimestampableInterface;
+use App\Entity\Traits\TimestampableTrait;
 use App\Entity\Traits\OldIdTrait;
 use App\Entity\Traits\OptionTrait;
 use App\Entity\Users\Personnel;
@@ -78,22 +79,21 @@ use Symfony\Component\Serializer\Attribute\Groups;
     ],
     paginationEnabled: false
 )]
-#[ORM\HasLifecycleCallbacks]
-class StructureDiplome
+class StructureDiplome implements TimestampableInterface
 {
     use EduSignTrait;
-    use LifeCycleTrait;
+    use TimestampableTrait;
     use OptionTrait;
     use OldIdTrait;
 
     #[ORM\Id]
     #[ORM\GeneratedValue]
     #[ORM\Column]
-    #[Groups(['diplome:detail', 'diplome:light', 'diplome:edt:read', 'maquette:detail', 'annee_universitaire:detail', 'pn:light'])]
+    #[Groups(['diplome:detail', 'diplome:light', 'diplome:edt:read', 'maquette:detail', 'annee_universitaire:detail', 'pn:light', 'stage_periode:read'])]
     private ?int $id = null;
 
     #[ORM\Column(length: 255)]
-    #[Groups(['diplome:detail', 'diplome:light', 'diplome:edt:read', 'maquette:detail', 'annee_universitaire:detail', 'pn:detail', 'pn:light'])]
+    #[Groups(['diplome:detail', 'diplome:light', 'diplome:edt:read', 'maquette:detail', 'annee_universitaire:detail', 'pn:detail', 'pn:light', 'stage_periode:read'])]
     private string $libelle;
 
     #[ORM\ManyToOne(inversedBy: 'responsableDiplome', cascade: ['persist'])]
@@ -113,7 +113,7 @@ class StructureDiplome
     private ?int $codeCelcatDepartement = null;
 
     #[ORM\Column(length: 40, nullable: true)]
-    #[Groups(['diplome:detail', 'diplome:light', 'diplome:edt:read', 'maquette:detail', 'pn:light'])]
+    #[Groups(['diplome:detail', 'diplome:light', 'diplome:edt:read', 'maquette:detail', 'pn:light', 'stage_periode:read'])]
     private ?string $sigle = null;
 
     #[ORM\ManyToOne(targetEntity: self::class, inversedBy: 'enfants')]

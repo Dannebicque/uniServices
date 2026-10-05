@@ -8,13 +8,16 @@ use ApiPlatform\Metadata\GetCollection;
 use ApiPlatform\Metadata\Post;
 use ApiPlatform\Metadata\Patch;
 use ApiPlatform\Metadata\Delete;
-use App\Entity\Traits\LifeCycleTrait;
+use App\Entity\Contracts\TimestampableInterface;
+use App\Entity\Traits\TimestampableTrait;
 use App\Entity\Traits\UuidTrait;
 use App\Entity\Users\Etudiant;
 use App\Entity\Users\Personnel;
 use App\ValueObject\Adresse;
 use StageBundle\Enum\EtatStageEnum;
 use StageBundle\Repository\Stages\StageEtudiantRepository;
+use Doctrine\Common\Collections\ArrayCollection;
+use Doctrine\Common\Collections\Collection;
 use Doctrine\DBAL\Types\Types;
 use Doctrine\ORM\Mapping as ORM;
 use Symfony\Component\Serializer\Attribute\Groups;
@@ -24,7 +27,6 @@ use ApiPlatform\Doctrine\Orm\Filter\SearchFilter;
 use ApiPlatform\Metadata\ApiFilter;
 
 #[ORM\Entity(repositoryClass: StageEtudiantRepository::class)]
-#[ORM\HasLifecycleCallbacks]
 #[ApiFilter(SearchFilter::class, properties: ['stagePeriode' => 'exact', 'tuteurUniversitaire' => 'exact'])]
 #[ApiResource(
     operations: [
@@ -41,10 +43,10 @@ use ApiPlatform\Metadata\ApiFilter;
         new Delete()
     ]
 )]
-class StageEtudiant
+class StageEtudiant implements TimestampableInterface
 {
     use UuidTrait;
-    use LifeCycleTrait;
+    use TimestampableTrait;
 
     #[ORM\Id]
     #[ORM\GeneratedValue]
@@ -60,9 +62,9 @@ class StageEtudiant
     #[Groups(['stage_periode_gestion', 'stage_etudiant:read', 'stage_etudiant:write'])]
     private ?Etudiant $etudiant = null;
 
-    #[ORM\OneToOne(targetEntity: Contact::class, cascade: ['persist', 'remove'])]
+    #[ORM\OneToOne(targetEntity: StageContact::class, cascade: ['persist', 'remove'])]
     #[Groups(['stage_periode_gestion', 'stage_entreprise', 'stage_etudiant:read', 'stage_etudiant:write'])]
-    private ?Contact $tuteur = null;
+    private ?StageContact $tuteur = null;
 
     #[ORM\Column(type: Types::STRING, length: 255, nullable: true)]
     #[Groups(['stage_periode_gestion', 'stage_entreprise', 'stage_etudiant:read', 'stage_etudiant:write'])]
@@ -148,9 +150,9 @@ class StageEtudiant
     #[Groups(['stage_periode_gestion', 'stage_etudiant:read', 'stage_etudiant:write'])]
     private ?Personnel $tuteurUniversitaire = null;
 
-    #[ORM\ManyToOne(targetEntity: Entreprise::class, inversedBy: 'stageEtudiants', cascade: ['persist', 'remove'])]
+    #[ORM\ManyToOne(targetEntity: StageEntreprise::class, inversedBy: 'stageEtudiants', cascade: ['persist', 'remove'])]
     #[Groups(['stage_entreprise_administration', 'stage_periode_gestion', 'stage_etudiant:read', 'stage_etudiant:write'])]
-    private ?Entreprise $entreprise = null;
+    private ?StageEntreprise $entreprise = null;
 
     #[ORM\Column(type: Types::STRING, length: 255, nullable: true)]
     #[Groups(['stage_etudiant:read', 'stage_etudiant:write'])]
@@ -200,10 +202,18 @@ class StageEtudiant
     #[Groups(['stage_etudiant:read', 'stage_etudiant:write'])]
     private ?string $reportName = null;
 
+    /**
+     * @var Collection<int, StageAvenant>
+     */
+    #[ORM\OneToMany(targetEntity: StageAvenant::class, mappedBy: 'stageEtudiant', cascade: ['persist', 'remove'], orphanRemoval: true)]
+    #[Groups(['stage_etudiant:read'])]
+    private Collection $avenants;
+
     public function __construct(?float $gratificationMontant = null)
     {
         $this->setUuid();
         $this->gratificationMontant = $gratificationMontant;
+        $this->avenants = new ArrayCollection();
     }
 
     public function getId(): ?int
@@ -235,12 +245,12 @@ class StageEtudiant
         return $this;
     }
 
-    public function getTuteur(): ?Contact
+    public function getTuteur(): ?StageContact
     {
         return $this->tuteur;
     }
 
-    public function setTuteur(?Contact $tuteur): self
+    public function setTuteur(?StageContact $tuteur): self
     {
         $this->tuteur = $tuteur;
 
@@ -439,12 +449,12 @@ class StageEtudiant
         return $this;
     }
 
-    public function getEntreprise(): ?Entreprise
+    public function getEntreprise(): ?StageEntreprise
     {
         return $this->entreprise;
     }
 
-    public function setEntreprise(?Entreprise $entreprise): self
+    public function setEntreprise(?StageEntreprise $entreprise): self
     {
         $this->entreprise = $entreprise;
 
@@ -483,9 +493,15 @@ class StageEtudiant
         return Adresse::fromArray($this->adresseStage);
     }
 
-    public function setAdresseStage(?Adresse $adresseStage): self
+    public function setAdresseStage(Adresse|array|null $adresseStage): self
     {
-        $this->adresseStage = $adresseStage ? $adresseStage->toArray() : null;
+        if ($adresseStage instanceof Adresse) {
+            $this->adresseStage = $adresseStage->toArray();
+        } elseif (is_array($adresseStage)) {
+            $this->adresseStage = Adresse::fromArray($adresseStage)?->toArray();
+        } else {
+            $this->adresseStage = null;
+        }
 
         return $this;
     }
@@ -628,6 +644,36 @@ class StageEtudiant
     public function setReportName(?string $reportName): self
     {
         $this->reportName = $reportName;
+
+        return $this;
+    }
+
+    /**
+     * @return Collection<int, StageAvenant>
+     */
+    public function getAvenants(): Collection
+    {
+        return $this->avenants;
+    }
+
+    public function addAvenant(StageAvenant $avenant): static
+    {
+        if (!$this->avenants->contains($avenant)) {
+            $this->avenants->add($avenant);
+            $avenant->setStageEtudiant($this);
+        }
+
+        return $this;
+    }
+
+    public function removeAvenant(StageAvenant $avenant): static
+    {
+        if ($this->avenants->removeElement($avenant)) {
+            // set the owning side to null (unless already changed)
+            if ($avenant->getStageEtudiant() === $this) {
+                $avenant->setStageEtudiant(null);
+            }
+        }
 
         return $this;
     }

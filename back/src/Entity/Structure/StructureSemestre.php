@@ -16,7 +16,8 @@ use App\Entity\Etudiant\EtudiantScolariteSemestre;
 use App\Entity\Personnel\PersonnelEnseignantHrs;
 use App\Entity\Scolarite\ScolEvaluation;
 use App\Entity\Traits\EduSignTrait;
-use App\Entity\Traits\LifeCycleTrait;
+use App\Entity\Contracts\TimestampableInterface;
+use App\Entity\Traits\TimestampableTrait;
 use App\Entity\Traits\OldIdTrait;
 use App\Entity\Traits\OptionTrait;
 use App\Filter\SemestreFilter;
@@ -71,10 +72,9 @@ use Symfony\Component\Serializer\Attribute\Groups;
         new Delete(security: "is_granted('CAN_DELETE_SEMESTRE', object)")
     ]
 )]
-#[ORM\HasLifecycleCallbacks]
-class StructureSemestre
+class StructureSemestre implements TimestampableInterface
 {
-    use LifeCycleTrait;
+    use TimestampableTrait;
     use OptionTrait;
     use EduSignTrait;
     use OldIdTrait; //todo: a supprimer après transfert
@@ -82,11 +82,11 @@ class StructureSemestre
     #[ORM\Id]
     #[ORM\GeneratedValue]
     #[ORM\Column]
-    #[Groups(['semestre:detail', 'semestre:light', 'maquette:detail', 'scolarite:read', 'enseignement:read', 'annee:read'])]
+    #[Groups(['semestre:detail', 'semestre:light', 'maquette:detail', 'scolarite:read', 'enseignement:read', 'annee:read', 'stage_periode:read'])]
     private ?int $id = null;
 
     #[ORM\Column(length: 255)]
-    #[Groups(['semestre:detail', 'semestre:light', 'maquette:detail', 'scolarite:read', 'etudiant:read', 'pn:read', 'enseignant_hrs:read', 'edt_event:read:agenda', 'annee:read'])]
+    #[Groups(['semestre:detail', 'semestre:light', 'maquette:detail', 'scolarite:read', 'etudiant:read', 'pn:read', 'enseignant_hrs:read', 'edt_event:read:agenda', 'annee:read', 'stage_periode:read'])]
     private string $libelle;
 
     #[ORM\Column]
@@ -125,7 +125,7 @@ class StructureSemestre
     private Collection $groupes;
 
     #[ORM\ManyToOne(inversedBy: 'semestres')]
-    #[Groups(['semestre:detail', 'semestre:light', 'annee:light', 'scolarite:read', 'enseignement:read', 'etudiant:read'])]
+    #[Groups(['semestre:detail', 'semestre:light', 'annee:light', 'scolarite:read', 'enseignement:read', 'etudiant:read', 'stage_periode:read'])]
     private ?StructureAnnee $annee = null;
 
     /**
@@ -148,12 +148,6 @@ class StructureSemestre
     #[ORM\OneToMany(targetEntity: EdtEvent::class, mappedBy: 'semestre', orphanRemoval: true, cascade: ['remove'])]
     private Collection $events;
 
-    /**
-     * @var Collection<int, EdtContraintesSemestre>
-     */
-    #[ORM\OneToMany(targetEntity: EdtContraintesSemestre::class, mappedBy: 'semestre', orphanRemoval: true, cascade: ['remove'])]
-    private Collection $contraintesSemestres;
-
     #[ORM\OneToMany(mappedBy: 'semestre', targetEntity: EtudiantScolariteSemestre::class, cascade: ['persist', 'remove'], orphanRemoval: true)]
     #[Groups(['semestre:detail'])]
     private Collection $scolariteSemestre;
@@ -174,7 +168,6 @@ class StructureSemestre
         $this->ues = new ArrayCollection();
         $this->evaluations = new ArrayCollection();
         $this->events = new ArrayCollection();
-        $this->contraintesSemestres = new ArrayCollection();
         $this->scolariteSemestre = new ArrayCollection();
         $this->scolariteSemestrePropositions = new ArrayCollection();
         $this->enseignantHrs = new ArrayCollection();
@@ -441,36 +434,6 @@ class StructureSemestre
             // set the owning side to null (unless already changed)
             if ($event->getSemestre() === $this) {
                 $event->setSemestre(null);
-            }
-        }
-
-        return $this;
-    }
-
-    /**
-     * @return Collection<int, EdtContraintesSemestre>
-     */
-    public function getContraintesSemestres(): Collection
-    {
-        return $this->contraintesSemestres;
-    }
-
-    public function addContraintesSemestre(EdtContraintesSemestre $contraintesSemestre): static
-    {
-        if (!$this->contraintesSemestres->contains($contraintesSemestre)) {
-            $this->contraintesSemestres->add($contraintesSemestre);
-            $contraintesSemestre->setSemestre($this);
-        }
-
-        return $this;
-    }
-
-    public function removeContraintesSemestre(EdtContraintesSemestre $contraintesSemestre): static
-    {
-        if ($this->contraintesSemestres->removeElement($contraintesSemestre)) {
-            // set the owning side to null (unless already changed)
-            if ($contraintesSemestre->getSemestre() === $this) {
-                $contraintesSemestre->setSemestre(null);
             }
         }
 
